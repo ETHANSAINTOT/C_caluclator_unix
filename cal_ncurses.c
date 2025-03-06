@@ -1,29 +1,10 @@
-/****************************************************************************************************************\
-**                                                                                                              **
-** EPITECH PROJECT, 2025                                                                                        **
-**                                                                                                              **
-** Module Name : B-NCU-200                                                                                      **
-** Module description : The ncurses module                                                                      **
-**                                                                                                              **
-** Project name : The ncurses cal                                                                               **
-** Project description : Creation of a calculator in ncurses without coding style and all functions are allowed **
-**                                                                                                              **
-** File name: cal.c                                                                                             **
-** File description : the main file                                                                             **
-**                                                                                                              **
-** Editor : ethan.saintot@epitech.eu                                                                            **
-**                                                                                                              **
-** Language : C                                                                                                 **
-**                                                                                                              **
-\****************************************************************************************************************/
-
-
 #include <ncurses.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <complex.h>
 
 /* Définitions de constantes mathématiques */
 #ifndef M_PI
@@ -34,17 +15,21 @@
 #endif
 
 /* ============================= */
-/* Partie Parsing (modifiée)     */
-/* Grammaire utilisée :
-   expression = term { ('+' | '-') term }
-   term       = power { ( 'x' | '/' | "//" ) power }
-   power      = factor [ '^' power ]  (droite associatif)
-   factor     = { '-' } primary { ('!' | '%') }
-   primary    = number | "pi" | 'e' | '(' expression ')'
+/* Partie Parsing                */
+/* Utilise la grammaire :
+     expression = term { ('+' | '-') term }
+     term       = power { ( 'x' | '/' | "//" ) power }
+     power      = factor [ '^' power ]          (droite associativité)
+     factor     = { '-' } primary { ('!' | '%') }
+     primary    = func_call | constant | number | group
+     func_call  = ident '(' arglist ')'
+     arglist    = expression [ ',' expression ]
+     constant   = "pi" | "e" | "i"
+     group      = '(' expression ')' | '[' expression ']' | '{' expression '}'
 */
 /* ============================= */
 
-const char *expr;  /* pointeur global pour l'analyse */
+const char *expr;  /* pointeur global sur la chaîne à analyser */
 int error_flag = 0;
 
 void skip_whitespace(void) {
@@ -52,19 +37,19 @@ void skip_whitespace(void) {
         expr++;
 }
 
-double parse_expression(void);
-double parse_term(void);
-double parse_power(void);
-double parse_factor(void);
-double parse_primary(void);
+double complex parse_expression(void);
+double complex parse_term(void);
+double complex parse_power(void);
+double complex parse_factor(void);
+double complex parse_primary(void);
 
-double parse_expression(void) {
-    double val = parse_term();
+double complex parse_expression(void) {
+    double complex val = parse_term();
     skip_whitespace();
     while (*expr == '+' || *expr == '-') {
         char op = *expr;
         expr++;
-        double val2 = parse_term();
+        double complex val2 = parse_term();
         if (error_flag) return 0;
         if (op == '+')
             val += val2;
@@ -75,28 +60,28 @@ double parse_expression(void) {
     return val;
 }
 
-double parse_term(void) {
-    double val = parse_power();
+double complex parse_term(void) {
+    double complex val = parse_power();
     skip_whitespace();
     while (1) {
-        if (*expr == 'x') { /* multiplication */
+        if (*expr == 'x') {  /* multiplication */
             expr++;
-            double val2 = parse_power();
+            double complex val2 = parse_power();
             val *= val2;
         } else if (*expr == '/') {
             expr++;
             if (*expr == '/') { /* division entière : "//" */
                 expr++;
-                double val2 = parse_power();
-                if (val2 == 0) {
+                double complex val2 = parse_power();
+                if (cabs(val2) < 1e-12) {
                     error_flag = 1;
                     fprintf(stderr, "Erreur : division entière par 0\n");
                     return 0;
                 }
-                val = trunc(val / val2);
+                val = trunc(creal(val) / creal(val2));
             } else { /* division classique */
-                double val2 = parse_power();
-                if (val2 == 0) {
+                double complex val2 = parse_power();
+                if (cabs(val2) < 1e-12) {
                     error_flag = 1;
                     fprintf(stderr, "Erreur : division par 0\n");
                     return 0;
@@ -111,18 +96,18 @@ double parse_term(void) {
     return val;
 }
 
-double parse_power(void) {
-    double base = parse_factor();
+double complex parse_power(void) {
+    double complex base = parse_factor();
     skip_whitespace();
     if (*expr == '^') {
-        expr++; /* on saute '^' */
-        double exponent = parse_power(); /* puissance est droite associatif */
-        return pow(base, exponent);
+        expr++; /* sauter '^' */
+        double complex exponent = parse_power();
+        return cpow(base, exponent);
     }
     return base;
 }
 
-double parse_factor(void) {
+double complex parse_factor(void) {
     skip_whitespace();
     int neg = 0;
     while (*expr == '-') {
@@ -130,18 +115,19 @@ double parse_factor(void) {
         expr++;
         skip_whitespace();
     }
-    double val = parse_primary();
+    double complex val = parse_primary();
     if (error_flag) return 0;
     skip_whitespace();
     while (*expr == '!' || *expr == '%') {
         if (*expr == '!') {
             expr++;
-            if (val < 0) {
+            /* Factorielle définie uniquement pour les réels non négatifs */
+            if (cimag(val) != 0 || creal(val) < 0) {
                 error_flag = 1;
-                fprintf(stderr, "Erreur : factorielle d'un nombre négatif\n");
+                fprintf(stderr, "Erreur : factorielle d'un nombre négatif ou complexe non supportée\n");
                 return 0;
             }
-            val = tgamma(val + 1);
+            val = tgamma(creal(val) + 1);
         } else if (*expr == '%') {
             expr++;
             val = val / 100.0;
@@ -153,31 +139,98 @@ double parse_factor(void) {
     return val;
 }
 
-double parse_primary(void) {
+double complex parse_primary(void) {
     skip_whitespace();
-    double val = 0;
-    if (*expr == '(') {
-        expr++; /* parenthèse ouvrante */
-        double inner = parse_expression();
-        skip_whitespace();
-        if (*expr != ')') {
-            error_flag = 1;
-            fprintf(stderr, "Erreur : ')' attendue\n");
-            return 0;
+    //double complex val = 0;
+    if (isalpha(*expr)) {
+        /* Lecture de l'identifiant */
+        char ident[32];
+        int pos = 0;
+        while (isalpha(*expr)) {
+            if (pos < 31)
+                ident[pos++] = *expr;
+            expr++;
         }
-        expr++; /* parenthèse fermante */
-        return inner;
+        ident[pos] = '\0';
+        skip_whitespace();
+        if (*expr == '(') {
+            /* Appel de fonction */
+            expr++; /* sauter '(' */
+            double complex arg1 = parse_expression();
+            double complex arg2 = 0;
+            skip_whitespace();
+            int num_args = 1;
+            if (*expr == ',') {
+                expr++; /* sauter ',' */
+                arg2 = parse_expression();
+                num_args = 2;
+                skip_whitespace();
+            }
+            if (*expr != ')') {
+                error_flag = 1;
+                fprintf(stderr, "Erreur : ')' attendue après fonction\n");
+                return 0;
+            }
+            expr++; /* sauter ')' */
+            if ((strcmp(ident, "log") == 0 || strcmp(ident, "ln") == 0) && num_args == 1) {
+                return clog(arg1);
+            } else if (strcmp(ident, "cos") == 0 && num_args == 1) {
+                return ccos(arg1);
+            } else if (strcmp(ident, "sin") == 0 && num_args == 1) {
+                return csin(arg1);
+            } else if (strcmp(ident, "tan") == 0 && num_args == 1) {
+                return ctan(arg1);
+            } else if (strcmp(ident, "arccos") == 0 && num_args == 1) {
+                return cacos(arg1);
+            } else if (strcmp(ident, "arcsin") == 0 && num_args == 1) {
+                return casin(arg1);
+            } else if (strcmp(ident, "arctan") == 0 && num_args == 1) {
+                return catan(arg1);
+            } else if (strcmp(ident, "sqrt") == 0 && num_args == 1) {
+                return csqrt(arg1);
+            } else if (strcmp(ident, "root") == 0 && num_args == 2) {
+                /* root(x,n) = x^(1/n) */
+                return cpow(arg1, 1.0/arg2);
+            } else {
+                error_flag = 1;
+                fprintf(stderr, "Erreur : fonction inconnue '%s' ou nombre d'arguments invalide\n", ident);
+                return 0;
+            }
+        } else {
+            /* Constante ou identifiant simple */
+            if (strcmp(ident, "pi") == 0) {
+                return M_PI;
+            } else if (strcmp(ident, "e") == 0) {
+                return M_E;
+            } else if (strcmp(ident, "i") == 0) {
+                return I;
+            } else {
+                error_flag = 1;
+                fprintf(stderr, "Erreur : identifiant inconnu '%s'\n", ident);
+                return 0;
+            }
+        }
     } else if (isdigit(*expr) || *expr == '.') {
         char *endptr;
-        val = strtod(expr, &endptr);
+        double real_val = strtod(expr, &endptr);
         expr = endptr;
-        return val;
-    } else if (strncmp(expr, "pi", 2) == 0) {
-        expr += 2;
-        return M_PI;
-    } else if (*expr == 'e') {
-        expr++;
-        return M_E;
+        return real_val;
+    } else if (*expr == '(' || *expr == '[' || *expr == '{') {
+        char open = *expr;
+        char close;
+        if (open == '(') close = ')';
+        else if (open == '[') close = ']';
+        else /* if (open == '{') */ close = '}';
+        expr++; /* sauter le caractère d'ouverture */
+        double complex inner = parse_expression();
+        skip_whitespace();
+        if (*expr != close) {
+            error_flag = 1;
+            fprintf(stderr, "Erreur : '%c' attendue\n", close);
+            return 0;
+        }
+        expr++; /* sauter le caractère de fermeture */
+        return inner;
     } else {
         error_flag = 1;
         fprintf(stderr, "Erreur : caractère inattendu '%c'\n", *expr);
@@ -185,11 +238,11 @@ double parse_primary(void) {
     }
 }
 
-/* Fonction d'évaluation : lance l'analyse sur l'expression donnée */
-double evaluate_expression(const char *expression_str) {
+/* Fonction d'évaluation : lance le parsing sur l'expression donnée */
+double complex evaluate_expression(const char *expression_str) {
     expr = expression_str;
     error_flag = 0;
-    double res = parse_expression();
+    double complex res = parse_expression();
     skip_whitespace();
     if (*expr != '\0' && *expr != '\n')
         error_flag = 1;
@@ -208,31 +261,29 @@ typedef struct {
     char label[16];
 } Button;
 
-/* Grille de boutons : ici 5 lignes x 6 colonnes */
-#define GRID_ROWS 5
+/* Nouvelle grille de boutons : 7 lignes x 6 colonnes (42 cases) */
+#define GRID_ROWS 7
 #define GRID_COLS 6
 #define NUM_BUTTONS (GRID_ROWS * GRID_COLS)
 
 Button buttons[NUM_BUTTONS];
 int selected_button = 0;  /* index du bouton sélectionné */
 
-/* La zone de saisie de l'expression (buffer éditable) */
+/* Buffer d'expression éditable */
 char expression_buf[256] = "";
-int expr_cursor = 0;      /* position d'insertion dans expression_buf */
+int expr_cursor = 0;      /* position d'insertion dans le buffer */
 
-/* Mode de focus : 0 = boutons, 1 = édition de l'expression */
+/* Mode de focus : 0 = mode boutons, 1 = mode édition */
 int focus_mode = 0;
 
 /* Zone de message (résultat ou erreur) */
 char message[256] = "";
 
-/* Convertit la portion d'expression après '^' en exposant (superscript)
-   et construit une version formatée dans dest. */
+/* Convertit une expression contenant '^' en affichant les exposants en superscript */
 void format_expression(const char *src, char *dest, size_t dest_size) {
     size_t j = 0;
     for (size_t i = 0; src[i] && j < dest_size - 1; i++) {
         if (src[i] == '^') {
-            /* Au lieu d'afficher '^', on convertit le nombre suivant en exposant */
             i++;
             while (src[i] && (src[i] == '-' || isdigit(src[i]) || src[i]=='.')) {
                 const char *sup = NULL;
@@ -256,7 +307,7 @@ void format_expression(const char *src, char *dest, size_t dest_size) {
                 }
                 i++;
             }
-            i--; /* ajuster l'index car la boucle for incrémente */
+            i--;
         } else {
             dest[j++] = src[i];
         }
@@ -264,7 +315,7 @@ void format_expression(const char *src, char *dest, size_t dest_size) {
     dest[j] = '\0';
 }
 
-/* Insertion de texte dans le buffer d'expression à la position expr_cursor */
+/* Insertion de texte dans le buffer d'expression à la position du curseur */
 void insert_text(const char *text) {
     int len = strlen(expression_buf);
     int text_len = strlen(text);
@@ -288,15 +339,16 @@ void delete_char(void) {
     }
 }
 
-/* Initialisation des boutons dans une grille 5x6 */
+/* Initialisation des boutons dans une grille 7x6 */
 void init_buttons(void) {
-    /* Disposition proposée (les chaînes vides sont des cases inactives) */
     const char *labels[GRID_ROWS][GRID_COLS] = {
-        {"Quit", "C",   "←",  "(",  ")",   ""},
-        {"7",    "8",   "9",  "+",  "x",   "-"},
-        {"4",    "5",   "6",  "/",  "//",  "^"},
-        {"1",    "2",   "3",  "pi", "e",   "."},
-        {"0",    "!",   "%",  "=",  "",    ""}
+        {"Quit", "C",   "<-", "(",  ")",  "["},
+        {"]",    "{",   "}",  "7",  "8",  "9"},
+        {"+",    "x",   "-",  "/",  "//", "^"},
+        {"pi",   "e",   ".",  "4",  "5",  "6"},
+        {"1",    "2",   "3",  "0",  "!",  "%"},
+        {"log",  "ln",  "cos", "sin", "tan", "arctan"},
+        {"sqrt", "root","=",  "<",  ">",  ""}
     };
     int start_x = 2, start_y = 5;
     int btn_width = 8, btn_height = 3;
@@ -317,16 +369,15 @@ void init_buttons(void) {
     }
 }
 
-/* Dessine les boutons sur l'écran */
+/* Affiche les boutons sur l'écran */
 void draw_buttons(void) {
     for (int i = 0; i < NUM_BUTTONS; i++) {
         if (strlen(buttons[i].label) == 0)
-            continue; /* case inactive */
+            continue;
         int x = buttons[i].x, y = buttons[i].y;
         int w = buttons[i].width, h = buttons[i].height;
         if (focus_mode == 0 && i == selected_button)
             attron(A_REVERSE);
-        /* Dessiner le contour du bouton */
         for (int j = 0; j < h; j++) {
             for (int k = 0; k < w; k++) {
                 if (j == 0 || j == h - 1 || k == 0 || k == w - 1)
@@ -335,7 +386,6 @@ void draw_buttons(void) {
                     mvprintw(y + j, x + k, " ");
             }
         }
-        /* Affichage centré du label */
         int label_len = strlen(buttons[i].label);
         int label_x = x + (w - label_len) / 2;
         int label_y = y + h / 2;
@@ -346,11 +396,10 @@ void draw_buttons(void) {
 }
 
 /* Affiche la zone d'expression et le message.
-   En mode édition, on affiche le buffer brut avec un indicateur de curseur. */
+   En mode édition, le buffer brut est affiché avec un indicateur de curseur. */
 void draw_display(void) {
     if (focus_mode == 1) {
         mvprintw(1, 2, "Expression (edit): %-50s", expression_buf);
-        /* Affichage du curseur sous forme d'un '^' à la position correspondante */
         int base = strlen("Expression (edit): ");
         mvprintw(2, base + 2 + expr_cursor, "^");
     } else {
@@ -360,9 +409,9 @@ void draw_display(void) {
     }
     mvprintw(4, 2, "Result/Error: %-50s", message);
     if (focus_mode == 0)
-        mvprintw(0, 2, "Focus: Boutons (F2 pour éditer, q pour quitter)");
+        mvprintw(0, 2, "Focus: Boutons (F2: éditer, q: quitter)");
     else
-        mvprintw(0, 2, "Focus: Expression (F2 pour boutons, q pour quitter)");
+        mvprintw(0, 2, "Focus: Expression (F2: boutons, q: quitter)");
 }
 
 int main(void) {
@@ -390,10 +439,9 @@ int main(void) {
         refresh();
 
         ch = getch();
-        if (ch == 'q' || ch == 'Q') {  /* quitter avec q */
+        if (ch == 'q' || ch == 'Q')
             break;
-        }
-        if (ch == KEY_F(2)) {  /* F2 pour changer de mode */
+        if (ch == KEY_F(2)) {
             focus_mode = !focus_mode;
             continue;
         }
@@ -461,6 +509,21 @@ int main(void) {
                         }
                     }
                 }
+            }
+            /* Support du clavier physique en mode Boutons :
+               les touches '<' et '>' déplacent le curseur dans l'expression */
+            else if (ch == '<') {
+                if (expr_cursor > 0)
+                    expr_cursor--;
+            } else if (ch == '>') {
+                if (expr_cursor < (int)strlen(expression_buf))
+                    expr_cursor++;
+            }
+            else if (ch == KEY_BACKSPACE || ch == 127) {
+                delete_char();
+            } else if (isprint(ch)) {
+                char s[2] = { (char)ch, '\0' };
+                insert_text(s);
             } else if (ch == '\n' || ch == KEY_ENTER) {
                 char *label = buttons[selected_button].label;
                 if (strcmp(label, "Quit") == 0) {
@@ -469,26 +532,29 @@ int main(void) {
                     expression_buf[0] = '\0';
                     expr_cursor = 0;
                     message[0] = '\0';
-                } else if (strcmp(label, "←") == 0) {
+                } else if (strcmp(label, "<-") == 0) {
                     delete_char();
                 } else if (strcmp(label, "=") == 0) {
                     message[0] = '\0';
-                    double res = evaluate_expression(expression_buf);
+                    double complex res = evaluate_expression(expression_buf);
                     if (!error_flag) {
-                        snprintf(message, sizeof(message), "%g", res);
-                        /* Optionnel : réinitialiser l'expression avec le résultat */
-                        snprintf(expression_buf, sizeof(expression_buf), "%g", res);
+                        if (fabs(cimag(res)) < 1e-12)
+                            snprintf(message, sizeof(message), "%g", creal(res));
+                        else
+                            snprintf(message, sizeof(message), "%g+%gi", creal(res), cimag(res));
+                        /* Optionnel : mettre à jour l'expression avec le résultat */
+                        snprintf(expression_buf, sizeof(expression_buf), "%s", message);
                         expr_cursor = strlen(expression_buf);
                     }
                 } else {
                     insert_text(label);
                 }
             }
-        } else {  /* Mode Édition d'expression */
-            if (ch == KEY_LEFT) {
+        } else {  /* Mode Édition */
+            if (ch == KEY_LEFT || ch == '<') {
                 if (expr_cursor > 0)
                     expr_cursor--;
-            } else if (ch == KEY_RIGHT) {
+            } else if (ch == KEY_RIGHT || ch == '>') {
                 if (expr_cursor < (int)strlen(expression_buf))
                     expr_cursor++;
             } else if (ch == KEY_BACKSPACE || ch == 127) {

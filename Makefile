@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c11
 NAME = cal_ncurses
-SRC = cal.c
+SRC = cal_ncurses.c
 OBJ = $(SRC:.c=.o)
 
 all: $(NAME)
